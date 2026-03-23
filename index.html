@@ -119,98 +119,90 @@
         // --- CONFIG ---
         const SB_URL = "https://pqfrzamdhdicefgbwruo.supabase.co";
         const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxZnJ6YW1kaGRpY2VmZ2J3cnVvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNjc1NzgsImV4cCI6MjA4OTg0MzU3OH0.b3nM0icWc0ViSjJ3pZk-ajE7l0BK8mE803E1TSauqtc";
-        const supabase = supabase.createClient(SB_URL, SB_KEY);
+        // Skapa anslutningen
+    const supabaseClient = supabase.createClient(SB_URL, SB_KEY);
+    
+    // Hitta elementen på sidan
+    const canvas = document.getElementById('vocalCanvas');
+    const ctx = canvas.getContext('2d');
+    const playBtn = document.getElementById('playBtn');
+    const statusText = document.getElementById('status');
 
-        const canvas = document.getElementById('vocalCanvas');
-        const ctx = canvas.getContext('2d');
-        const playBtn = document.getElementById('playBtn');
-        const statusText = document.getElementById('status');
+    let pitchData = [];
+    let isPlaying = false;
+    let startTime = 0;
+    let animationId;
 
-        let pitchData = [];
-        let isPlaying = false;
-        let audio = new Audio('din_stamma.mp3'); // Denna bör också matchas mot Supabase-id
+    // 2. MOTORN SOM HÄMTAR DATA (Denna saknades!)
+    async function loadData() {
+        console.log("Försöker hämta data...");
+        const { data, error } = await supabaseClient
+            .from('stammor')
+            .select('*')
+            .limit(1)
+            .single();
 
-        // Inställningar för visning
-        const pixelsPerSecond = 180;
-        const pitchScale = 25; 
-
-        // 1. Ladda data från Supabase
-        async function init() {
-            const { data, error } = await supabase
-                .from('stammor')
-                .select('*')
-                .limit(1) // Vi tar första bästa för testet
-                .single();
-
-            if (error) {
-                statusText.innerText = "Error: Kunde inte ladda data.";
-                console.error(error);
-            } else {
-                pitchData = data.pitch_data;
-                statusText.innerText = `Låt: ${data.song_title} (${data.voice_part})`;
-            }
+        if (error) {
+            statusText.innerText = "Kunde inte ladda noter. Är tabellen tom?";
+            console.error("Fel vid hämtning:", error);
+        } else {
+            pitchData = data.pitch_data;
+            statusText.innerText = `Låt: ${data.song_title} (${data.voice_part})`;
+            console.log("Data laddad:", pitchData.length, "punkter");
         }
+    }
 
-        // 2. Canvas-rendering
-        function render() {
-            // Rensa canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            if (isPlaying) {
-                const now = audio.currentTime;
-                const centerX = canvas.width / 2;
+    // 3. RITAREN (Det som rör sig på skärmen)
+    function draw(timestamp) {
+        if (!startTime) startTime = timestamp;
+        const elapsed = (timestamp - startTime) / 1000;
 
-                pitchData.forEach(point => {
-                    // Beräkna position
-                    const x = centerX + (point.time - now) * pixelsPerSecond;
-                    const y = canvas.height - (point.pitch - 50) * pitchScale;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        const centerX = canvas.width / 2;
+        const pixelsPerSecond = 150;
 
-                    // Rita bara om det är inom skärmen (prestanda)
-                    if (x > -50 && x < canvas.width + 50) {
-                        const isActive = Math.abs(point.time - now) < 0.05;
-                        
-                        // Rita "noten" / ordet
-                        ctx.fillStyle = isActive ? "#FFFFFF" : "rgba(160, 160, 160, 0.4)";
-                        ctx.font = isActive ? "bold 30px Arial" : "20px Arial";
-                        
-                        // Om point.text finns, rita den, annars en prick
-                        if (point.text) {
-                            ctx.fillText(point.text, x, y);
-                        } else {
-                            ctx.beginPath();
-                            ctx.arc(x, y, isActive ? 8 : 5, 0, Math.PI * 2);
-                            ctx.fill();
-                        }
-                    }
-                });
+        pitchData.forEach(point => {
+            const x = centerX + (point.time - elapsed) * pixelsPerSecond;
+            // Skala om tonhöjden så den hamnar på skärmen (enkel logik för test)
+            const y = canvas.height - (point.pitch / 2); 
+
+            if (x > -50 && x < canvas.width + 50) {
+                ctx.fillStyle = Math.abs(x - centerX) < 5 ? "#FFFFFF" : "rgba(255, 85, 50, 0.6)";
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, Math.PI * 2);
+                ctx.fill();
             }
-            requestAnimationFrame(render);
+        });
+
+        if (isPlaying) {
+            animationId = requestAnimationFrame(draw);
         }
+    }
 
-        // 3. Kontroller
-        playBtn.onclick = () => {
-            if (!isPlaying) {
-                audio.play();
-                isPlaying = true;
-                playBtn.innerText = "PAUSA";
-            } else {
-                audio.pause();
-                isPlaying = false;
-                playBtn.innerText = "FORTSÄTT";
-            }
-        };
+    // 4. START/STOPP-KNAPPEN
+    playBtn.onclick = () => {
+        if (!isPlaying) {
+            isPlaying = true;
+            startTime = 0;
+            playBtn.innerText = "STOPPA";
+            animationId = requestAnimationFrame(draw);
+        } else {
+            isPlaying = false;
+            playBtn.innerText = "STARTA STÄMMA";
+            cancelAnimationFrame(animationId);
+        }
+    };
 
-        // Responsiv canvas
-        window.onresize = () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight * 0.75;
-        };
+    // Anpassa storlek efter fönstret
+    window.onresize = () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight * 0.7;
+    };
 
-        // Starta allt
-        window.onresize();
-        init();
-        render();
-
-    </script>
+    // STARTA ALLT
+    window.onresize();
+    loadData(); // <--- Kör hämtningen direkt när sidan laddas
+</script>
 </body>
 </html>
